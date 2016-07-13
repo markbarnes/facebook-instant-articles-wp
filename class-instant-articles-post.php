@@ -296,7 +296,7 @@ class Instant_Articles_Post {
 
 		// If we’re not it the loop or otherwise properly setup.
 		$reset_postdata = false;
-		if ( $this->_post->ID !== $post->ID ) {
+		if ( empty( $post ) || $this->_post->ID !== $post->ID ) {
 			$post = get_post( $this->_post->ID );
 			setup_postdata( $post );
 			$reset_postdata = true;
@@ -322,6 +322,12 @@ class Instant_Articles_Post {
 		// Some people choose to disable wpautop. Due to the Instant Articles spec, we really want it in!
 		$content = wpautop( $content );
 
+		// Remove hyperlinks beginning with a # as they cause errors on Facebook (from http://wordpress.stackexchange.com/a/227332/19528)
+	        preg_match_all( '!<a[^>]*? href=[\'"]#[^<]+</a>!i', $content, $matches );
+	        foreach ( $matches[0] as $link ) {
+	                $content = str_replace( $link, strip_tags($link), $content );
+	        }
+		
 		/**
 		 * Filter the post content for Instant Articles.
 		 *
@@ -591,9 +597,9 @@ class Instant_Articles_Post {
 		$settings_publishing = Instant_Articles_Option_Publishing::get_option_decoded();
 
 		if (
-			isset ( $settings_publishing['custom_rules_enabled'] ) &&
+			isset( $settings_publishing['custom_rules_enabled'] ) &&
 			! empty( $settings_publishing['custom_rules_enabled'] ) &&
-			isset ( $settings_publishing['custom_rules'] ) &&
+			isset( $settings_publishing['custom_rules'] ) &&
 			! empty( $settings_publishing['custom_rules'] )
 		) {
 			$transformer->loadRules( $settings_publishing['custom_rules'] );
@@ -614,7 +620,8 @@ class Instant_Articles_Post {
 
 		$title = $this->get_the_title();
 		if ( $title ) {
-			$document = DOMDocument::loadHTML( '<?xml encoding="' . $blog_charset . '" ?><h1>' . $title . '</h1>' );
+			$document = new DOMDocument();
+			$document->loadHTML( '<?xml encoding="' . $blog_charset . '" ?><h1>' . $title . '</h1>' );
 			$transformer->transform( $header, $document );
 		}
 
@@ -640,7 +647,8 @@ class Instant_Articles_Post {
 		if ( $cover['src'] ) {
 			$image = Image::create()->withURL( $cover['src'] );
 			if ( isset( $cover['caption'] ) && strlen( $cover['caption'] ) > 0 ) {
-				$document = DOMDocument::loadHTML( '<?xml encoding="' . $blog_charset . '" ?><h1>' . $cover['caption']  . '</h1>' );
+				$document = new DOMDocument();
+				$document->loadHTML( '<?xml encoding="' . $blog_charset . '" ?><h1>' . $cover['caption']  . '</h1>' );
 				$image->withCaption( $transformer->transform( Caption::create(), $document ) );
 			}
 
@@ -654,10 +662,9 @@ class Instant_Articles_Post {
 				->addMetaProperty( 'op:generator:application:version', IA_PLUGIN_VERSION );
 
 		$settings_style = Instant_Articles_Option_Styles::get_option_decoded();
-		if ( isset( $settings_style['article_style'] ) && ! empty ( $settings_style['article_style'] ) ) {
+		if ( isset( $settings_style['article_style'] ) && ! empty( $settings_style['article_style'] ) ) {
 			$this->instant_article->withStyle( $settings_style['article_style'] );
-		}
-		else {
+		} else {
 			$this->instant_article->withStyle( 'default' );
 		}
 
@@ -673,6 +680,20 @@ class Instant_Articles_Post {
 		}
 
 		$result = $document->loadHTML( '<!doctype html><html><body>' . $content . '</body></html>' );
+
+		// We need to make sure that scripts use absolute URLs and not relative URLs.
+		$scripts = $document->getElementsByTagName('script');
+		if ( ! empty( $scripts ) ) {
+			foreach ( $scripts as $script ){
+				$src = $script->getAttribute( 'src' );
+				$explode_src = parse_url( $src );
+				if ( is_array( $explode_src ) && empty( $explode_src['scheme'] ) && ! empty( $explode_src['host'] ) && ! empty( $explode_src['path'] ) ) {
+					$src = 'https://' . $explode_src['host'] . $explode_src['path'];
+				}
+				$script->setAttribute( 'src' , $src );
+			}
+		}
+
 		libxml_clear_errors();
 		libxml_use_internal_errors( $libxml_previous_state );
 
